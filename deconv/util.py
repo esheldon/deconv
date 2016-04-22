@@ -15,9 +15,7 @@ def calcmom(gal_image, psf_image, sigma_weight):
     psf_image: Galsim image
         Galsim Image in real space
     sigma_weight: float
-        sigma for weight in pixels, will be 1/sigma in k space pixels.
-        Note the k space image will generally be in sky coordinates
-        not pixel coordinates, so adjust accordingly
+        sigma for weight in real space, will be 1/sigma in k space.
 
     returns
     -------
@@ -31,3 +29,9 @@ def calcmom(gal_image, psf_image, sigma_weight):
     meas.go()
 
     return meas
+
+def calcmom_obs(obs):
+    """
+    Deconvolve the image and measure the moments for the ngmix observation
+    """
+    pass
