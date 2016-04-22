@@ -16,14 +16,15 @@ class Moments(object):
         sigma_weight: float
             sigma for weight in pixels, will be 1/sigma in k space pixels.
             Note the k space image will generally be in sky coordinates
-            not pixel coordinates, so adjust accordingly
+            not pixel coordinates, so we multiply by the scale of the
+            gs_kimage
         **kw:
             keywords for KSigmaWeight
         """
 
         self.sigma_weight=sigma_weight
         self._set_image(gs_kimage)
-        self._set_weight()
+        self._set_weight(**kw)
 
     def get_result(self):
         """
@@ -48,48 +49,52 @@ class Moments(object):
 
         imsum = wim.sum()
 
-        irr = (rows**2*wim).sum()/imsum
-        irc = (rows*cols*wim).sum()/imsum
-        icc = (cols**2*wim).sum()/imsum
-        self._set_result(irr, irc, icc)
+        irr_k = (rows**2*wim).sum()/imsum
+        irc_k = (rows*cols*wim).sum()/imsum
+        icc_k = (cols**2*wim).sum()/imsum
+        self._set_result(irr_k, irc_k, icc_k)
 
-    def _set_result(self, irr, irc, icc):
-        T = irr + icc
+    def _set_result(self, irr_k, irc_k, icc_k):
+        dk=self.dk
+
+        T_k = irr_k + icc_k
 
         flags=0
         e1=-9999.0
         e2=-9999.0
-        Treal=-9999.0
-        if T > 0:
-            Treal=1.0/T
-            Treal /= dk**2
 
-            e1 = -(icc - irr)/T
-            e2 = -2.0*irc/T
+        T=-9999.0
+        if T_k > 0:
+
+            T=1.0/T_k
+            T /= dk**2
+
+            e1 = -(icc_k - irr_k)/T_k
+            e2 = -2.0*irc_k/T_k
         else:
             flags=LOW_T
 
         self.result={
             'flags':flags,
-            'dk':self.dk,
-            'irr':irr,
-            'irc':irc,
-            'icc':icc,
+            'dk':dk,
+            'irr_k':irr_k,
+            'irc_k':irc_k,
+            'icc_k':icc_k,
             'e1':e1,
             'e2':e2,
-            'T':T,
-            'Treal':Treal,
+            'T_k':T_k,
+            'T':T, # real space T
         }
 
 
-    def _set_weight(self):
+    def _set_weight(self, **kw):
         """
         the weight in k space
         """
-        self.dk = self.gs_kimage.stepK()
-        kw = KSigmaWeight(sigma_weight*self.dk, **kw)
+        self.dk = self.gs_kimage.scale
+        kwt = KSigmaWeight(self.sigma_weight*self.dk, **kw)
 
-        weight,rows,cols = kw.get_weight(self.dims, self.cen)
+        weight,rows,cols = kwt.get_weight(self.dims, self.cen)
         self.weight=weight
         self.rows=rows
         self.cols=cols
