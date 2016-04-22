@@ -14,10 +14,9 @@ class Moments(object):
         kimage: image
             Galsim Image in k space, deconvolved from the psf
         sigma_weight: float
-            sigma for weight in pixels, will be 1/sigma in k space pixels.
-            Note the k space image will generally be in sky coordinates
-            not pixel coordinates, so we multiply by the scale of the
-            gs_kimage
+            sigma for weight in real space, will be 1/sigma in k space.
+            Note the k space image may not be sampled with step 1,
+            so we multiply by the scale of the gs_kimage
         **kw:
             keywords for KSigmaWeight
         """
@@ -49,12 +48,18 @@ class Moments(object):
 
         imsum = wim.sum()
 
-        irr_k = (rows**2*wim).sum()/imsum
-        irc_k = (rows*cols*wim).sum()/imsum
-        icc_k = (cols**2*wim).sum()/imsum
-        self._set_result(irr_k, irc_k, icc_k)
+        irrsum_k = (rows**2*wim).sum()
+        ircsum_k = (rows*cols*wim).sum()
+        iccsum_k = (cols**2*wim).sum()
 
-    def _set_result(self, irr_k, irc_k, icc_k):
+        self._set_result(irrsum_k, ircsum_k, iccsum_k, imsum)
+
+    def _set_result(self, irrsum_k, ircsum_k, iccsum_k, imsum):
+
+        irr_k=irrsum_k/imsum
+        irc_k=ircsum_k/imsum
+        icc_k=iccsum_k/imsum
+
         dk=self.dk
 
         T_k = irr_k + icc_k
@@ -76,14 +81,22 @@ class Moments(object):
 
         self.result={
             'flags':flags,
-            'dk':dk,
+
+            'e1':e1,
+            'e2':e2,
+            'T':T, # real space T
+
             'irr_k':irr_k,
             'irc_k':irc_k,
             'icc_k':icc_k,
-            'e1':e1,
-            'e2':e2,
             'T_k':T_k,
-            'T':T, # real space T
+
+            'irrsum_k':irrsum_k,
+            'ircsum_k':ircsum_k,
+            'iccsum_k':iccsum_k,
+            'imsum':imsum,
+
+            'dk':dk,
         }
 
 
