@@ -1,37 +1,20 @@
 from __future__ import print_function
 
-from .deconv import DeConvolver
-from .measure import Moments
-
-
-def calcmom(gal_image, psf_image, sigma_weight):
+def get_canonical_kcenter(dims):
     """
-    Deconvolve the image and measure the moments
 
-    parameters
-    ----------
-    gal_image: Galsim image
-        Galsim Image in real space
-    psf_image: Galsim image
-        Galsim Image in real space
-    sigma_weight: float
-        sigma for weight in real space, will be 1/sigma in k space.
+    get the galsim canonical center for an image in k space.  See
+    the drawKImage method
 
-    returns
-    -------
-    A Moments object.  Use get_result() to get the result dict
     """
-    deconv=DeConvolver(gal_image, psf_image)
+    assert (dims[0] % 2)==0
+    assert (dims[1] % 2)==0
 
-    kimage = deconv.get_kimage()
+    cen=[
+        int( (dims[0]-1.0)/2.0 + 0.5),
+        int( (dims[1]-1.0)/2.0 + 0.5),
+    ]
 
-    meas=Moments(kimage, sigma_weight)
-    meas.go()
+    return cen
 
-    return meas
 
-def calcmom_obs(obs):
-    """
-    Deconvolve the image and measure the moments for the ngmix observation
-    """
-    pass

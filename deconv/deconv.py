@@ -35,7 +35,7 @@ class DeConvolver(object):
         )
         return kreal
 
-    def get_kgs(self):
+    def get_gsobj(self):
         """
         get the galsim object
         """
