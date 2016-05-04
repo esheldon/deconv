@@ -78,3 +78,4 @@ def symmetrize_image(im, cen=None, doplot=False, file=None, **kw):
             color='red',
             file=file,
             **kw)
+

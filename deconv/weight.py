@@ -35,7 +35,7 @@ class KSigmaWeight(object):
         k2 = rows**2 + cols**2
 
         w=numpy.where(k2 < self.kmax2)
-        print("npix > 0: %d/%d" % (w[0].size, dims[0]*dims[1]))
+        #print("npix > 0: %d/%d" % (w[0].size, dims[0]*dims[1]))
         if w[0].size > 0:
             wt[w] = (1.0 - k2[w]*self.sigma2/2/self.N)**self.N
 

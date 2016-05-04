@@ -1,12 +1,48 @@
 from __future__ import print_function
 import numpy
+from numpy import array
+import galsim
+
 from .weight import KSigmaWeight
 from .deconv import DeConvolver
+
 
 from . import util
 
 
 LOW_T=2**0
+
+def calcmom_ksigma_obs(obs, sigma_weight, **kw):
+    """
+    Deconvolve the image and measure the moments using
+    a sigmak type weight
+
+    parameters
+    ----------
+    obs: ngmix Observation
+        An ngmix Observation, with a psf Observation set
+    sigma_weight: float
+        sigma for weight in real space, will be 1/sigma in k space.
+        If scale if image is not unity, the sigma will be
+        modified to be set to sigma*scale
+
+    returns
+    -------
+    A Moments object.  Use get_result() to get the result dict
+    """
+
+
+    image=obs.image
+    pimage=obs.psf.image
+    jac=obs.jacobian
+
+    wcs = jac.get_galsim_wcs()
+
+    gsim = galsim.Image(image.copy(), wcs=wcs)
+    psf_gsim = galsim.Image(pimage.copy(), wcs=wcs)
+
+    meas=calcmom_ksigma(gsim, psf_gsim, sigma_weight, **kw)
+    return meas
 
 def calcmom_ksigma(gal_image, psf_image, sigma_weight, **kw):
     """
@@ -48,13 +84,11 @@ def calcmom_ksigma(gal_image, psf_image, sigma_weight, **kw):
     )
     meas.go()
 
-    return meas
+    # save some other stuff
+    meas.gal_image=gal_image
+    meas.psf_image=psf_image
 
-def calcmom_obs(obs):
-    """
-    Deconvolve the image and measure the moments for the ngmix observation
-    """
-    pass
+    return meas
 
 class Moments(object):
     """
@@ -139,6 +173,7 @@ class Moments(object):
 
             'e1':e1,
             'e2':e2,
+            'e':array([e1,e2]),
             'T':T, # real space T
 
             'irr_k':irr_k,
