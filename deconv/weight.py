@@ -8,7 +8,7 @@ class KSigmaWeight(object):
         (1 - k^2 sigma^2/2 N)^N  k < sqrt(2N)/sigma
                   0              k > sqrt(2N)/sigma
     """
-    def __init__(self, sigma, N=4):
+    def __init__(self, sigma, N=4, **kw):
         self.sigma=sigma
         self.sigma2=sigma**2
         self.N=N

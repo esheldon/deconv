@@ -59,6 +59,9 @@ def calcmom_ksigma(gal_image, psf_image, sigma_weight, **kw):
         sigma for weight in real space, will be 1/sigma in k space.
         If scale if image is not unity, the sigma will be
         modified to be set to sigma*scale
+    **kw:
+        Keywords passed on to constuctors for KSigmaWeight and
+        DeConvolver, such as dk
 
     returns
     -------
@@ -66,7 +69,7 @@ def calcmom_ksigma(gal_image, psf_image, sigma_weight, **kw):
     """
 
     # deconvolve the psf
-    deconv=DeConvolver(gal_image, psf_image)
+    deconv=DeConvolver(gal_image, psf_image, **kw)
     gs_kimage = deconv.get_kimage()
 
     # get the weight function

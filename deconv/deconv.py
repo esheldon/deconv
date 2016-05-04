@@ -10,7 +10,7 @@ class DeConvolver(object):
     """
     deconvolve the input PSF from the input image
     """
-    def __init__(self, gal_image, psf_image):
+    def __init__(self, gal_image, psf_image, dk=None):
         """
         parameters
         ----------
@@ -19,6 +19,8 @@ class DeConvolver(object):
         psf_image: galsim Image
             Galsim Image object
         """
+
+        self.dk=dk
         self._set_data(gal_image, psf_image)
 
     def get_kimage(self):
@@ -32,6 +34,7 @@ class DeConvolver(object):
 
         kreal,kimag = self.igal_nopsf.drawKImage(
             dtype=numpy.float64,
+            scale=self.dk,
         )
         return kreal
 
