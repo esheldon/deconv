@@ -134,7 +134,7 @@ class Moments(object):
         measure weighted moments in k space
         """
 
-        rows,cols=self.rows,self.cols
+        rows,cols=self.get_rows_cols()
         kimage=self.kimage
 
         wim = self.kimage * self.kweight
@@ -222,30 +222,23 @@ class Moments(object):
         else:
             self.cen=util.get_canonical_kcenter(self.dims)
 
-        self._set_rows_cols(**kw)
+    def get_rows_cols(self, **kw):
 
-    def _set_rows_cols(self, **kw):
+        dims=self.kimage.shape
+        cen=self.cen
 
-        if 'rows' in kw:
-            self.rows=kw['rows']
-            self.cols=kw['cols']
-        else:
-            dims=self.kimage.shape
-            cen=self.cen
+        rows,cols=numpy.mgrid[
+            0:dims[0],
+            0:dims[1],
+        ]
 
-            rows,cols=numpy.mgrid[
-                0:dims[0],
-                0:dims[1],
-            ]
+        rows=numpy.array(rows, dtype='f8')
+        cols=numpy.array(cols, dtype='f8')
 
-            rows=numpy.array(rows, dtype='f8')
-            cols=numpy.array(cols, dtype='f8')
+        rows -= cen[0]
+        cols -= cen[1]
 
-            rows -= cen[0]
-            cols -= cen[1]
-
-            self.rows=rows
-            self.cols=cols
+        return rows, cols
 
 
     def _set_weight(self, kweight, **kw):
