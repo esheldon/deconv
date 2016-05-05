@@ -10,9 +10,12 @@ from .deconv import DeConvolver
 from . import util
 
 MAX_ALLOWED_E=0.9999999
+DEFVAL=-9999.0
 
 LOW_T=2**0
 HIGH_E=2**1
+LOW_FLUX=2**2
+LOW_WSUM=2**3
 
 def calcmom_ksigma(gal_image, psf_image, sigma_weight, **kw):
     """
@@ -46,9 +49,11 @@ def calcmom_ksigma(gal_image, psf_image, sigma_weight, **kw):
     dk=gs_kimage.scale
     kwt = KSigmaWeight(sigma_weight*dk, **kw)
 
+
     dims=gs_kimage.array.shape
     cen=util.get_canonical_kcenter(dims)
     kweight, rows, cols = kwt.get_weight(dims, cen)
+
 
     # calculate moments
     meas=Moments(
@@ -139,6 +144,7 @@ class Moments(object):
 
         wim = self.kimage * self.kweight
 
+        wsum   = self.kweight.sum()
         wimsum = wim.sum()
 
         irrsum_k = (rows**2*wim).sum()
@@ -153,34 +159,50 @@ class Moments(object):
         ircsum_k *= dk2
         iccsum_k *= dk2
 
-        self._set_result(irrsum_k, ircsum_k, iccsum_k, wimsum)
+        self._set_result(irrsum_k, ircsum_k, iccsum_k, wimsum, wsum)
 
-    def _set_result(self, irrsum_k, ircsum_k, iccsum_k, wimsum):
+    def _set_result(self, irrsum_k, ircsum_k, iccsum_k, wimsum, wsum):
         from math import sqrt
 
-        irr_k=irrsum_k/wimsum
-        irc_k=ircsum_k/wimsum
-        icc_k=iccsum_k/wimsum
-
-        T_k = irr_k + icc_k
-
         flags=0
-        e1=-9999.0
-        e2=-9999.0
-        T=-9999.0
 
-        if T_k > 0:
+        wflux=DEFVAL
+        irr_k=DEFVAL
+        irc_k=DEFVAL
+        icc_k=DEFVAL
 
-            T=1.0/T_k
+        e1=DEFVAL
+        e2=DEFVAL
+        T=DEFVAL
+        T_k=DEFVAL
 
-            e1 = -(icc_k - irr_k)/T_k
-            e2 = -2.0*irc_k/T_k
-
-            etot = sqrt(e1**2 + e2**2)
-            if etot >= MAX_ALLOWED_E:
-                flags = HIGH_E
+        if wsum <= 0.0:
+            flags |= LOW_WSUM
         else:
-            flags=LOW_T
+
+            wflux = wimsum/wsum
+
+            if wimsum <= 0.0:
+                flags |= LOW_FLUX
+            else:
+                irr_k=irrsum_k/wimsum
+                irc_k=ircsum_k/wimsum
+                icc_k=iccsum_k/wimsum
+
+                T_k = irr_k + icc_k
+
+                if T_k <= 0.0:
+                    flags |= LOW_T
+                else:
+
+                    T=1.0/T_k
+
+                    e1 = -(icc_k - irr_k)/T_k
+                    e2 = -2.0*irc_k/T_k
+
+                    etot = sqrt(e1**2 + e2**2)
+                    if etot >= MAX_ALLOWED_E:
+                        flags |= HIGH_E
 
         self._result={
             'flags':flags,
@@ -189,6 +211,7 @@ class Moments(object):
             'e2':e2,
             'e':array([e1,e2]),
             'T':T, # real space T
+            'wflux': wflux,
 
             'irr_k':irr_k,
             'irc_k':irc_k,
@@ -198,6 +221,8 @@ class Moments(object):
             'irrsum_k':irrsum_k,
             'ircsum_k':ircsum_k,
             'iccsum_k':iccsum_k,
+
+            'wsum':wsum,
             'wimsum':wimsum,
 
             'dk':self.dk,
@@ -338,7 +363,11 @@ class ObsKSigmaMoments(Moments):
         irrsum_k     = 0.0
         ircsum_k     = 0.0
         iccsum_k     = 0.0
+
+        wsum         = 0.0
         wimsum       = 0.0
+
+        wfluxsum     = 0.0
 
         for tres in self._reslist:
             tflags=tres['flags']
@@ -351,15 +380,25 @@ class ObsKSigmaMoments(Moments):
                 irrsum_k += tres['irrsum_k']
                 ircsum_k += tres['ircsum_k']
                 iccsum_k += tres['iccsum_k']
+
+                wsum     += tres['wsum']
                 wimsum   += tres['wimsum']
+
+                # for now straight average
+                wfluxsum += tres['wflux']
 
                 flags |= tflags
 
         # now we can use the result setter in the parent
         # class to finish the job
 
-        self._set_result(irrsum_k, ircsum_k, iccsum_k, wimsum)
+        self._set_result(irrsum_k, ircsum_k, iccsum_k, wimsum, wsum)
         res=self._result
+
+        # for now straight average
+        if nimage_use > 0:
+            res['wflux'] = wfluxsum/nimage_use
+
         res['nimage_use']   = nimage_use
         res['nimage_total'] = nimage_total
         res['orflags']      = flags
