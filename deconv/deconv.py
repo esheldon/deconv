@@ -44,7 +44,16 @@ class DeConvolver(object):
         """
         return self.igal_nopsf
 
-    def _set_data(self, gal_image, psf_image):
+    def _set_data(self, gal_image, psf_image_orig):
+
+        psf_image = psf_image_orig.copy()
+
+        imsum=psf_image.array.sum()
+        if imsum == 0.0:
+            raise ValueError("PSF image has zero flux")
+
+        psf_image /= imsum
+
         self.igal = galsim.InterpolatedImage(gal_image)
         self.ipsf = galsim.InterpolatedImage(psf_image)
 
