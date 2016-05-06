@@ -8,3 +8,4 @@ from . import weight
 from .weight import KSigmaWeight
 
 from . import util
+from .util import DeconvRangeError

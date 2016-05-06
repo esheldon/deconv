@@ -1,6 +1,7 @@
 from __future__ import print_function
 import numpy
 
+from .util import DeconvRangeError
 try:
     import galsim
 except:
@@ -50,7 +51,7 @@ class DeConvolver(object):
 
         imsum=psf_image.array.sum()
         if imsum == 0.0:
-            raise ValueError("PSF image has zero flux")
+            raise DeconvRangeError("PSF image has zero flux")
 
         psf_image /= imsum
 

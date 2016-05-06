@@ -1,6 +1,6 @@
 from __future__ import print_function
 import numpy
-from numpy import array
+from numpy import array, zeros
 import galsim
 
 from .weight import KSigmaWeight
@@ -8,6 +8,7 @@ from .deconv import DeConvolver
 
 
 from . import util
+from .util import DeconvMaxiter
 
 MAX_ALLOWED_E=0.9999999
 DEFVAL=-9999.0
@@ -30,11 +31,11 @@ def calcmom_ksigma(gal_image, psf_image, sigma_weight, **kw):
         Galsim Image in real space
     sigma_weight: float
         sigma for weight in real space, will be 1/sigma in k space.
-        If scale if image is not unity, the sigma will be
-        modified to be set to sigma*scale
+    dk: float
+        Step in k space, in units of 1/scale of the wcs
     **kw:
         Keywords passed on to constuctors for KSigmaWeight and
-        DeConvolver, such as dk
+        DeConvolver
 
     returns
     -------
@@ -42,6 +43,7 @@ def calcmom_ksigma(gal_image, psf_image, sigma_weight, **kw):
     """
 
     # deconvolve the psf
+    # note dk can be set in kw
     deconv=DeConvolver(gal_image, psf_image, **kw)
     gs_kimage = deconv.get_kimage()
 
@@ -53,7 +55,20 @@ def calcmom_ksigma(gal_image, psf_image, sigma_weight, **kw):
     dims=gs_kimage.array.shape
     cen=util.get_canonical_kcenter(dims)
     kweight, rows, cols = kwt.get_weight(dims, cen)
+    '''
+    res=kwt.find_weight(gs_kimage.array, **kw)
+    for k in res:
+        if k not in ['weight','rows','cols']:
+            print("    ",k,res[k])
 
+    if res['flags'] != 0:
+        print("    MAX IT REACHED, using standared")
+        dims=gs_kimage.array.shape
+        cen=util.get_canonical_kcenter(dims)
+        kweight, rows, cols = kwt.get_weight(dims, cen)
+    else:
+        kweight=res['weight']
+    '''
 
     # calculate moments
     meas=Moments(
@@ -252,17 +267,7 @@ class Moments(object):
         dims=self.kimage.shape
         cen=self.cen
 
-        rows,cols=numpy.mgrid[
-            0:dims[0],
-            0:dims[1],
-        ]
-
-        rows=numpy.array(rows, dtype='f8')
-        cols=numpy.array(cols, dtype='f8')
-
-        rows -= cen[0]
-        cols -= cen[1]
-
+        rows,cols = util.make_rows_cols(dims, cen)
         return rows, cols
 
 
@@ -294,17 +299,24 @@ class ObsKSigmaMoments(Moments):
     measure on ngmix Observation, ObsList, or MultiBandObsList
 
     Use a fixed ksigma weight
+
+    parameters
+    ----------
+    obs: ngmix Observation
+        An ngmix Observation, with a psf Observation set
+    sigma_weight: float
+        sigma for weight in real space, will be 1/sigma in k space.
+    dk: float
+        Step in k space, in units of 1/scale of the wcs
+    **kw:
+        other keywords for calcmom_ksigma
     """
 
     def __init__(self, obs, sigma_weight, skip_flagged=True, **kw):
-        """
-        parameters
-        ----------
-        obs: ngmix observation type
-            an Observation, ObsList, or MultiBandObsList
-        """
         import ngmix
         self.mb_obs = ngmix.observation.get_mb_obs(obs)
+        self.nband=len(self.mb_obs)
+
         self.sigma_weight=sigma_weight
         self.skip_flagged=skip_flagged
         self.kw=kw
@@ -319,27 +331,29 @@ class ObsKSigmaMoments(Moments):
         """
         get the list of result dictionaries from all images
         """
-        if not hasattr(self,'_reslist'):
+        if not hasattr(self,'_mb_reslist'):
             raise RuntimeError("run go() first")
-        return self._reslist
+        return self._mb_reslist
 
     def get_meas_list(self):
         """
         get the list of measureres
         """
-        if not hasattr(self,'_measlist'):
+        if not hasattr(self,'_mb_measlist'):
             raise RuntimeError("run go() first")
-        return self._measlist
+        return self._mb_measlist
 
 
     def go(self):
         """
         measure moments on all images and perform the sum and mean
         """
-        reslist=[]
-        measlist=[]
+        mb_reslist=[]
+        mb_measlist=[]
 
         for obslist in self.mb_obs:
+            reslist=[]
+            measlist=[]
             for obs in obslist:
                 tmeas=_calcmom_ksigma_obs(
                     obs,
@@ -351,57 +365,85 @@ class ObsKSigmaMoments(Moments):
                 measlist.append(tmeas)
                 reslist.append(res)
 
-        self._measlist=measlist
-        self._reslist=reslist
+            mb_reslist.append( reslist )
+            mb_measlist.append( measlist )
+
+        self._mb_measlist=mb_measlist
+        self._mb_reslist=mb_reslist
         self._combine_results()
 
     def _combine_results(self):
-        flags=0
+        nband=self.nband
 
-        nimage_use   = 0
-        nimage_total = 0
-        irrsum_k     = 0.0
-        ircsum_k     = 0.0
-        iccsum_k     = 0.0
+        orflags=0
+        orflags_band    = zeros(nband,dtype='i4')
 
-        wsum         = 0.0
-        wimsum       = 0.0
+        nimage_band     = zeros(nband,dtype='i2')
+        nimage_use_band = zeros(nband,dtype='i2')
 
-        wfluxsum     = 0.0
+        irrsum_k        = 0.0
+        ircsum_k        = 0.0
+        iccsum_k        = 0.0
 
-        for tres in self._reslist:
-            tflags=tres['flags']
+        wsum            = 0.0
+        wimsum          = 0.0
 
-            nimage_total += 1
+        wfluxsum_band   = zeros(nband)
+        wfluxsum        = 0.0
 
-            if tflags == 0 or not self.skip_flagged:
-                nimage_use += 1
+        for band,reslist in enumerate(self._mb_reslist):
 
-                irrsum_k += tres['irrsum_k']
-                ircsum_k += tres['ircsum_k']
-                iccsum_k += tres['iccsum_k']
+            for tres in reslist:
 
-                wsum     += tres['wsum']
-                wimsum   += tres['wimsum']
+                nimage_band[band] += 1
 
-                # for now straight average
-                wfluxsum += tres['wflux']
+                flags=tres['flags']
 
-                flags |= tflags
+                orflags_band[band] |= flags
+                orflags |= flags
 
-        # now we can use the result setter in the parent
-        # class to finish the job
+                if flags == 0 or not self.skip_flagged:
+                    nimage_use_band[band] += 1
 
+                    irrsum_k += tres['irrsum_k']
+                    ircsum_k += tres['ircsum_k']
+                    iccsum_k += tres['iccsum_k']
+
+                    wsum     += tres['wsum']
+                    wimsum   += tres['wimsum']
+
+                    # for now straight average
+                    wfluxsum_band[band] += tres['wflux']
+                    wfluxsum += tres['wflux']
+
+        # the wflux set here will be over-written
         self._set_result(irrsum_k, ircsum_k, iccsum_k, wimsum, wsum)
         res=self._result
 
-        # for now straight average
+        nimage     = nimage_band.sum()
+        nimage_use = nimage_use_band.sum()
+
+        res['nimage_band']     = nimage_band
+        res['nimage']          = nimage
+        res['nimage_use_band'] = nimage_use_band
+        res['nimage_use']      = nimage_use
+        res['orflags_band']    = orflags_band
+        res['orflags']         = orflags
+        res['flags_band']      = orflags_band.copy()
+
+        res['wflux_band']      = numpy.zeros(nband) + DEFVAL
+        res['wflux']           = DEFVAL
+
         if nimage_use > 0:
+
+            # for now straight average of fluxes
+            w,=numpy.where(nimage_use_band > 0)
+            if w.size > 0:
+                res['wflux_band'][w] = wfluxsum_band[w]/nimage_use_band[w]
+                res['flags_band'][w] = 0
+
             res['wflux'] = wfluxsum/nimage_use
 
-        res['nimage_use']   = nimage_use
-        res['nimage_total'] = nimage_total
-        res['orflags']      = flags
 
 def _calcmom_ksigma_obs(obs, sigma_weight, **kw):
     """
@@ -414,22 +456,29 @@ def _calcmom_ksigma_obs(obs, sigma_weight, **kw):
         An ngmix Observation, with a psf Observation set
     sigma_weight: float
         sigma for weight in real space, will be 1/sigma in k space.
-        If scale if image is not unity, the sigma will be
-        modified to be set to sigma*scale
+    dk: float
+        Step in k space, in units of 1/scale of the wcs
+    **kw:
+        other keywords for calcmom_ksigma
 
     returns
     -------
     A Moments object.  Use get_result() to get the result dict
     """
 
+    pobs=obs.psf
+
     image=obs.image
-    pimage=obs.psf.image
+    pimage=pobs.image
+
     jac=obs.jacobian
+    psf_jac=pobs.jacobian
 
     wcs = jac.get_galsim_wcs()
+    psf_wcs = psf_jac.get_galsim_wcs()
 
     gsim = galsim.Image(image.copy(), wcs=wcs)
-    psf_gsim = galsim.Image(pimage.copy(), wcs=wcs)
+    psf_gsim = galsim.Image(pimage.copy(), wcs=psf_wcs)
 
     meas=calcmom_ksigma(gsim, psf_gsim, sigma_weight, **kw)
 

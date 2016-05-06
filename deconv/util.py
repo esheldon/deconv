@@ -1,6 +1,25 @@
 from __future__ import print_function
 import numpy
 
+class DeconvRangeError(Exception):
+    """
+    some range problem in the data
+    """
+    def __init__(self, value):
+         self.value = value
+    def __str__(self):
+        return repr(self.value)
+
+class DeconvMaxiter(Exception):
+    """
+    some range problem in the data
+    """
+    def __init__(self, value):
+         self.value = value
+    def __str__(self):
+        return repr(self.value)
+
+
 def get_canonical_kcenter(dims):
     """
 
