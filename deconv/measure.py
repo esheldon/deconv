@@ -139,6 +139,8 @@ class Moments(object):
             the image center.
         """
 
+        self._trim = kw.get('trim',False)
+
         self._set_image(gs_kimage, **kw)
         self._set_weight(kweight, **kw)
 
@@ -160,12 +162,36 @@ class Moments(object):
 
         wim = self.kimage * self.kweight
 
-        wsum   = self.kweight.sum()
-        wimsum = wim.sum()
 
-        irrsum_k = (rows**2*wim).sum()
-        ircsum_k = (rows*cols*wim).sum()
-        iccsum_k = (cols**2*wim).sum()
+        if self._trim:
+
+            cen=self.cen
+            dims=self.kimage.shape
+            mindist=min(cen[0], (dims[0]-1)-cen[0],
+                        cen[1], (dims[1]-1)-cen[1])
+            rsq=rows**2 + cols**2
+            w=numpy.where(rsq <= mindist**2)
+
+            wsum   = self.kweight[w].sum()
+            wimsum = wim[w].sum()
+
+            irrsum_k = (rows[w]**2*wim[w]).sum()
+            ircsum_k = (rows[w]*cols[w]*wim[w]).sum()
+            iccsum_k = (cols[w]**2*wim[w]).sum()
+
+
+        else:
+            wsum   = self.kweight.sum()
+            wimsum = wim.sum()
+
+            irrsum_k = (rows**2*wim).sum()
+            ircsum_k = (rows*cols*wim).sum()
+            iccsum_k = (cols**2*wim).sum()
+
+        #wmax=wim.argmax()
+        #cen=self.cen
+        #print("maxval:",wim.ravel()[wmax],"val at center:",
+        #      wim[cen[0],cen[1]])
 
         # put back on the natural scale
         dk=self.dk
@@ -321,6 +347,8 @@ class ObsKSigmaMoments(Moments):
         self.sigma_weight=sigma_weight
         self.skip_flagged=skip_flagged
         self.kw=kw
+        self._trim = kw.get('trim',False)
+        self._dk = kw.get('dk',None)
 
         self._set_deconvolvers()
 
@@ -359,24 +387,15 @@ class ObsKSigmaMoments(Moments):
                 gs_kimage = obs.deconvolver.get_kimage(
                     shear=shear,
                 )
+                #print("dk:",gs_kimage.scale)
 
+                #print("before:",gs_kimage(10,10))
                 if fix_noise:
+                    #print("fixing noise")
                     ny,nx=gs_kimage.array.shape
                     nshear=shear
                     if nshear is not None:
                         nshear = -nshear
-                    """
-                    print(ny,nx)
-                    tmp = obs.noise_deconvolver.get_kimage(
-                        shear=-shear,
-                        nx=nx,
-                        ny=ny,
-                        dk=gs_kimage.scale,
-                    )
-
-                    print(gs_kimage.array.shape, tmp.array.shape)
-                    stop
-                    """
 
                     gs_kimage += obs.noise_deconvolver.get_kimage(
                         shear=nshear,
@@ -384,6 +403,7 @@ class ObsKSigmaMoments(Moments):
                         ny=ny,
                         dk=gs_kimage.scale,
                     )
+                    #print("after:",gs_kimage(10,10))
 
 
                 dk=gs_kimage.scale
@@ -397,6 +417,7 @@ class ObsKSigmaMoments(Moments):
                 meas=Moments(
                     gs_kimage,
                     kweight,
+                    trim=self._trim, # trim the k space image
                 )
                 meas.go()
 
@@ -495,6 +516,47 @@ class ObsKSigmaMoments(Moments):
                 jac=obs.jacobian
                 psf_jac=pobs.jacobian
 
+                gsim = galsim.Image(obs.image.copy(), scale=1.0)
+                psf_gsim = galsim.Image(pobs.image.copy(), scale=1.0)
+
+
+                obs.deconvolver = DeConvolver(
+                    gsim,
+                    psf_gsim,
+                    dk=self._dk, # can be None
+                )
+
+                if fix_noise:
+                    rnoise = numpy.random.normal(
+                        loc=0.0,
+                        scale=1.0,
+                        size=obs.image.shape,
+                    )
+                    nim = numpy.sqrt( 1.0/obs.weight )
+                    rnoise *= nim
+
+                    gs_nim = galsim.Image(nim, scale=1.0)
+
+                    # new copy of the psf image
+                    psf_gsim = galsim.Image(pobs.image.copy(), scale=1.0)
+
+                    obs.noise_deconvolver = DeConvolver(
+                        gs_nim,
+                        psf_gsim,
+                        dk=self._dk, # can be None
+                    )
+
+    def _set_deconvolvers_fullwcs(self):
+
+        fix_noise=self.kw.get('fix_noise',False)
+
+        for obslist in self.mb_obs:
+            for obs in obslist:
+                pobs=obs.psf
+
+                jac=obs.jacobian
+                psf_jac=pobs.jacobian
+
                 wcs = jac.get_galsim_wcs()
                 psf_wcs = psf_jac.get_galsim_wcs()
 
@@ -505,6 +567,7 @@ class ObsKSigmaMoments(Moments):
                 obs.deconvolver = DeConvolver(
                     gsim,
                     psf_gsim,
+                    dk=self._dk, # can be None
                 )
 
                 if fix_noise:
@@ -524,6 +587,7 @@ class ObsKSigmaMoments(Moments):
                     obs.noise_deconvolver = DeConvolver(
                         gs_nim,
                         psf_gsim,
+                        dk=self._dk, # can be None
                     )
 
 
