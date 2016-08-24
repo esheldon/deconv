@@ -350,7 +350,8 @@ class ObsKSigmaMoments(Moments):
         self._trim = kw.get('trim',False)
         self._dk = kw.get('dk',None)
 
-        self._set_deconvolvers()
+        #self._set_deconvolvers()
+        self._set_deconvolvers_fullwcs()
 
     def get_result_list(self):
         """
