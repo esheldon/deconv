@@ -140,6 +140,7 @@ class Moments(object):
         """
 
         self._trim = kw.get('trim',False)
+        self._deweight = kw.get('deweight',False)
 
         self._set_image(gs_kimage, **kw)
         self._set_weight(kweight, **kw)
@@ -203,10 +204,12 @@ class Moments(object):
 
         self._set_result(irrsum_k, ircsum_k, iccsum_k, wimsum, wsum)
 
+
     def _set_result(self, irrsum_k, ircsum_k, iccsum_k, wimsum, wsum):
         from math import sqrt
 
         flags=0
+
 
         wflux=DEFVAL
         irr_k=DEFVAL
@@ -231,20 +234,25 @@ class Moments(object):
                 irc_k=ircsum_k/wimsum
                 icc_k=iccsum_k/wimsum
 
-                T_k = irr_k + icc_k
+                if self._deweight:
+                    irr_k,irc_k,icc_k,flags = self._deweight_moments(irr_k, irc_k, icc_k)
 
-                if T_k <= 0.0:
-                    flags |= LOW_T
-                else:
+                if flags==0:
 
-                    T=1.0/T_k
+                    T_k = irr_k + icc_k
 
-                    e1 = -(icc_k - irr_k)/T_k
-                    e2 = -2.0*irc_k/T_k
+                    if T_k <= 0.0:
+                        flags |= LOW_T
+                    else:
 
-                    etot = sqrt(e1**2 + e2**2)
-                    if etot >= MAX_ALLOWED_E:
-                        flags |= HIGH_E
+                        T=1.0/T_k
+
+                        e1 = -(icc_k - irr_k)/T_k
+                        e2 = -2.0*irc_k/T_k
+
+                        etot = sqrt(e1**2 + e2**2)
+                        if etot >= MAX_ALLOWED_E:
+                            flags |= HIGH_E
 
         self._result={
             'flags':flags,
@@ -348,6 +356,7 @@ class ObsKSigmaMoments(Moments):
         self.skip_flagged=skip_flagged
         self.kw=kw
         self._trim = kw.get('trim',False)
+        self._deweight = kw.get('deweight',False)
         self._dk = kw.get('dk',None)
 
         #self._set_deconvolvers()
@@ -505,6 +514,39 @@ class ObsKSigmaMoments(Moments):
                 res['flags_band'][w] = 0
 
             res['wflux'] = wfluxsum/nimage_use
+
+    def _deweight_moments(self, irr_k, irc_k, icc_k):
+        """
+        we would subtract (1/sigma_k^2) I
+        and sigmak is 1/sigma so just subtract sigma^2
+        """
+        #print("    deweighting")
+        flags=0
+
+        sigmasq=self.sigma_weight**2
+
+        m=numpy.zeros( (2,2) )
+        m[0,0] = irr_k
+        m[0,1] = irc_k
+        m[1,0] = irc_k
+        m[1,1] = icc_k
+
+        try:
+            minv = numpy.linalg.inv(m)
+
+            minv[0,0] -= sigmasq
+            minv[1,1] -= sigmasq
+
+            dm = numpy.linalg.inv(minv)
+        except numpy.linalg.LinAlgError as err:
+            print("error inverting matrix: '%s'" % str(err))
+            flags=1
+
+        irr=dm[0,0]
+        irc=dm[0,1]
+        icc=dm[1,1]
+
+        return irr,irc,icc,flags
 
     def _set_deconvolvers(self):
 
