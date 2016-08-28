@@ -45,7 +45,7 @@ class DeConvolver(object):
             ny=ny,
             scale=dk,
         )
-        return kreal
+        return kreal, kimag
 
     def get_sheared_kimage(self, shear, dk=None, nx=None, ny=None):
         """
@@ -72,7 +72,7 @@ class DeConvolver(object):
             ny=ny,
             scale=dk,
         )
-        return kreal
+        return kreal, kimag
 
 
     def get_sheared_gsobj(self, shear):

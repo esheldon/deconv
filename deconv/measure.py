@@ -45,7 +45,7 @@ def calcmom_ksigma(gal_image, psf_image, sigma_weight, **kw):
     # deconvolve the psf
     # note dk can be set in kw
     deconv=DeConvolver(gal_image, psf_image, **kw)
-    gs_kimage = deconv.get_kimage()
+    gs_kimage,gs_ikimage = deconv.get_kimage()
 
     # get the weight function
     dk=gs_kimage.scale
@@ -202,24 +202,27 @@ class Moments(object):
         ircsum_k *= dk2
         iccsum_k *= dk2
 
-        self._set_result(irrsum_k, ircsum_k, iccsum_k, wimsum, wsum)
+        M1sum_k = iccsum_k - irrsum_k
+        M2sum_k = 2.0*ircsum_k
+        Tsum_k = iccsum_k + irrsum_k
+
+        self._set_result(M1sum_k, M2sum_k, Tsum_k, wimsum, wsum)
 
 
-    def _set_result(self, irrsum_k, ircsum_k, iccsum_k, wimsum, wsum):
+    def _set_result(self, M1sum_k, M2sum_k, Tsum_k, wimsum, wsum):
         from math import sqrt
 
         flags=0
 
 
         wflux=DEFVAL
-        irr_k=DEFVAL
-        irc_k=DEFVAL
-        icc_k=DEFVAL
+        M1_k=DEFVAL
+        M2_k=DEFVAL
+        T_k=DEFVAL
 
         e1=DEFVAL
         e2=DEFVAL
         T=DEFVAL
-        T_k=DEFVAL
 
         if wsum <= 0.0:
             flags |= LOW_WSUM
@@ -230,25 +233,23 @@ class Moments(object):
             if wimsum <= 0.0:
                 flags |= LOW_FLUX
             else:
-                irr_k=irrsum_k/wimsum
-                irc_k=ircsum_k/wimsum
-                icc_k=iccsum_k/wimsum
+                M1_k=M1sum_k/wimsum
+                M2_k=M2sum_k/wimsum
+                T_k=Tsum_k/wimsum
 
                 if self._deweight:
+                    raise NotImplementedError("fix deweight")
                     irr_k,irc_k,icc_k,flags = self._deweight_moments(irr_k, irc_k, icc_k)
 
                 if flags==0:
-
-                    T_k = irr_k + icc_k
 
                     if T_k <= 0.0:
                         flags |= LOW_T
                     else:
 
                         T=1.0/T_k
-
-                        e1 = -(icc_k - irr_k)/T_k
-                        e2 = -2.0*irc_k/T_k
+                        e1 = -M1_k/T_k
+                        e2 = -M2_k/T_k
 
                         etot = sqrt(e1**2 + e2**2)
                         if etot >= MAX_ALLOWED_E:
@@ -263,14 +264,13 @@ class Moments(object):
             'T':T, # real space T
             'wflux': wflux,
 
-            'irr_k':irr_k,
-            'irc_k':irc_k,
-            'icc_k':icc_k,
+            'M1_k':M1_k,
+            'M2_k':M2_k,
             'T_k':T_k,
 
-            'irrsum_k':irrsum_k,
-            'ircsum_k':ircsum_k,
-            'iccsum_k':iccsum_k,
+            'M1sum_k':M1sum_k,
+            'M2sum_k':M2sum_k,
+            'Tsum_k':Tsum_k,
 
             'wsum':wsum,
             'wimsum':wimsum,
@@ -346,13 +346,15 @@ class ObsKSigmaMoments(Moments):
         other keywords for calcmom_ksigma
     """
 
-    def __init__(self, obs, sigma_weight, skip_flagged=True, **kw):
+    def __init__(self, obs, sigma_weight, skip_flagged=True, weight_type='ksigma', **kw):
         import ngmix
         self.mb_obs = ngmix.observation.get_mb_obs(obs)
 
         self.nband=len(self.mb_obs)
 
         self.sigma_weight=sigma_weight
+        self.weight_type=weight_type
+
         self.skip_flagged=skip_flagged
         self.kw=kw
         self._trim = kw.get('trim',False)
@@ -370,13 +372,29 @@ class ObsKSigmaMoments(Moments):
             raise RuntimeError("run go() first")
         return self._mb_reslist
 
-    def get_meas_list(self):
-        """
-        get the list of measureres
-        """
-        if not hasattr(self,'_mb_measlist'):
-            raise RuntimeError("run go() first")
-        return self._mb_measlist
+    def _measure_moments(self, gs_kimage, *args):
+        kwt = self._get_ksigma_weight(gs_kimage)
+
+        dims=gs_kimage.array.shape
+        cen=util.get_canonical_kcenter(dims)
+
+        kweight, rows, cols = kwt.get_weight(dims, cen)
+
+        # calculate moments
+        meas=Moments(
+            gs_kimage,
+            kweight,
+            trim=self._trim, # trim the k space image
+        )
+        meas.go()
+        res=meas.get_result()
+
+        return res
+
+    def _get_ksigma_weight(self, gs_kimage):
+        dk=gs_kimage.scale
+        kwt = KSigmaWeight(self.sigma_weight*dk, **self.kw)
+        return kwt
 
 
     def go(self, shear=None):
@@ -387,14 +405,13 @@ class ObsKSigmaMoments(Moments):
         fix_noise=self.kw.get('fix_noise',False)
 
         mb_reslist=[]
-        mb_measlist=[]
 
         for obslist in self.mb_obs:
             reslist=[]
             measlist=[]
             for obs in obslist:
 
-                gs_kimage = obs.deconvolver.get_kimage(
+                gs_kimage,gs_ikimage = obs.deconvolver.get_kimage(
                     shear=shear,
                 )
                 #print("dk:",gs_kimage.scale)
@@ -407,39 +424,23 @@ class ObsKSigmaMoments(Moments):
                     if nshear is not None:
                         nshear = -nshear
 
-                    gs_kimage += obs.noise_deconvolver.get_kimage(
+                    rim,iim = obs.noise_deconvolver.get_kimage(
                         shear=nshear,
                         nx=nx,
                         ny=ny,
                         dk=gs_kimage.scale,
                     )
+                    gs_kimage += rim
+
                     #print("after:",gs_kimage(10,10))
 
-
-                dk=gs_kimage.scale
-                kwt = KSigmaWeight(self.sigma_weight*dk, **self.kw)
-
-                dims=gs_kimage.array.shape
-                cen=util.get_canonical_kcenter(dims)
-                kweight, rows, cols = kwt.get_weight(dims, cen)
-
-                # calculate moments
-                meas=Moments(
-                    gs_kimage,
-                    kweight,
-                    trim=self._trim, # trim the k space image
-                )
-                meas.go()
-
-                res=meas.get_result()
+                res=self._measure_moments(gs_kimage, obs.weight)
 
                 measlist.append(meas)
                 reslist.append(res)
 
             mb_reslist.append( reslist )
-            mb_measlist.append( measlist )
 
-        self._mb_measlist=mb_measlist
         self._mb_reslist=mb_reslist
         self._combine_results()
 
@@ -452,12 +453,12 @@ class ObsKSigmaMoments(Moments):
         nimage_band     = zeros(nband,dtype='i2')
         nimage_use_band = zeros(nband,dtype='i2')
 
-        irrsum_k        = 0.0
-        ircsum_k        = 0.0
-        iccsum_k        = 0.0
+        M1sum_k  = 0.0
+        M2sum_k  = 0.0
+        Tsum_k   = 0.0
 
-        wsum            = 0.0
-        wimsum          = 0.0
+        wsum     = 0.0
+        wimsum   = 0.0
 
         wfluxsum_band   = zeros(nband)
         wfluxsum        = 0.0
@@ -476,9 +477,9 @@ class ObsKSigmaMoments(Moments):
                 if flags == 0 or not self.skip_flagged:
                     nimage_use_band[band] += 1
 
-                    irrsum_k += tres['irrsum_k']
-                    ircsum_k += tres['ircsum_k']
-                    iccsum_k += tres['iccsum_k']
+                    M1sum_k += tres['M1sum_k']
+                    M2sum_k += tres['M2sum_k']
+                    Tsum_k += tres['Tsum_k']
 
                     wsum     += tres['wsum']
                     wimsum   += tres['wimsum']
@@ -488,7 +489,7 @@ class ObsKSigmaMoments(Moments):
                     wfluxsum += tres['wflux']
 
         # the wflux set here will be over-written
-        self._set_result(irrsum_k, ircsum_k, iccsum_k, wimsum, wsum)
+        self._set_result(M1sum_k, M2sum_k, Tsum_k, wimsum, wsum)
         res=self._result
 
         nimage     = nimage_band.sum()
@@ -634,6 +635,169 @@ class ObsKSigmaMoments(Moments):
                     )
 
 
+class ObsGaussMoments(ObsKSigmaMoments):
+    def _measure_moments(self, gs_kimage, weight):
+        import ngmix
+
+        if self._deweight:
+            raise NotImplementedError("no dweight yet for gauss moms")
+
+        dk = gs_kimage.scale
+        dksq = dk**2
+
+        kwt, cen, dims = self._get_gauss_weight(gs_kimage)
+
+        if self._trim:
+            mindist=min(cen[0], (dims[0]-1)-cen[0],
+                        cen[1], (dims[1]-1)-cen[1])
+            rmax=mindist
+
+        else:
+            rmax=1.0e20
+
+        jacob=ngmix.UnitJacobian(
+            row=cen[0],
+            col=cen[1],
+        )
+        kobs = ngmix.Observation(
+            gs_kimage.array,
+            weight=weight,
+            jacobian=jacob,
+        )
+        res = kwt.get_weighted_moments(kobs, rmax=rmax)
+
+        return res
+
+    def _combine_results(self):
+        nband=self.nband
+
+        orflags=0
+        orflags_band    = zeros(nband,dtype='i4')
+
+        nimage_band     = zeros(nband,dtype='i2')
+        nimage_use_band = zeros(nband,dtype='i2')
+
+        parsum = zeros(6)
+        pvarsum = zeros( (6,6) )
+
+        wsum_band = zeros(nband)
+        wsum      = 0.0
+
+        wfluxsum_band   = zeros(nband)
+        wfluxsum        = 0.0
+
+        for band,reslist in enumerate(self._mb_reslist):
+
+            for tres in reslist:
+
+                nimage_band[band] += 1
+
+                flags=tres['flags']
+
+                orflags_band[band] |= flags
+                orflags |= flags
+
+                if flags == 0 or not self.skip_flagged:
+                    nimage_use_band[band] += 1
+
+                    parsum += tres['pars']
+                    pvarsum += tres['pars_cov']
+
+                    wsum_band[band] += tres['wsum']
+                    wsum            += tres['wsum']
+
+                    # this is weight*flux
+                    wfluxsum_band[band] += tres['pars'][5]
+                    wfluxsum += tres['pars'][5]
+
+        # the wflux set here will be over-written
+        res=self._get_result(parsum, pvarsum, wsum)
+
+        nimage     = nimage_band.sum()
+        nimage_use = nimage_use_band.sum()
+
+        res['nimage_band']     = nimage_band
+        res['nimage']          = nimage
+        res['nimage_use_band'] = nimage_use_band
+        res['nimage_use']      = nimage_use
+        res['orflags_band']    = orflags_band
+        res['orflags']         = orflags
+        res['flags_band']      = orflags_band.copy()
+
+        res['wflux_band']      = numpy.zeros(nband) + DEFVAL
+        res['wflux']           = DEFVAL
+
+        if nimage_use > 0:
+
+            # for now straight average of fluxes
+            w,=numpy.where(nimage_use_band > 0)
+            if w.size > 0:
+                res['wflux_band'][w] = wfluxsum_band[w]/wsum_band[band]
+                res['flags_band'][w] = 0
+
+            res['wflux'] = wfluxsum/wsum
+
+
+        wflux=DEFVAL
+        irr_k=DEFVAL
+        irc_k=DEFVAL
+        icc_k=DEFVAL
+
+        e1=DEFVAL
+        e2=DEFVAL
+        T=DEFVAL
+        T_k=DEFVAL
+
+        flags=res['flags']
+        if flags==0:
+            pars=res['pars']
+            wfluxsum = pars[5]
+
+            if wfluxsum <= 0.0:
+                flags |= LOW_FLUX
+            else:
+                T_k = pars[4]/wfluxsum
+                if T_k <= 0:
+                    flags |= LOW_T
+                else:
+
+                    T_k *= dk**2
+                    M1_k = pars[2]/wfluxsum*dk**2
+                    M2_k = pars[3]/wfluxsum*dk**2
+
+                    T=1.0/T_k
+                    e1 = -M1_k/T
+                    e2 = -M2_k/T
+
+                    wfluxsum_err = sqrt(res['pars_cov'][5,5])
+                    s2n_w = wfluxsum/wfluxsum_err
+
+                    res['T_k'] = T_k
+                    res['M1_k'] = M1_k
+                    res['M2_k'] = M2_k
+                    res['s2n_w'] = wflux/res['wsum']
+
+        return res
+
+
+    def _get_gaussian_weight(self, gs_kimage):
+        import ngmix
+
+        dk=gs_kimage.scale
+        dims=gs_kimage.array.shape
+        cen=util.get_canonical_kcenter(dims)
+
+        sigma = self.sigma_weight
+        sigmak = 1.0/sigma
+
+        # the k space image does not have unit pixel size
+        sigmak *= (1.0/dk)
+
+        Tk = 2.0*sigmak**2
+        pars = [cen[0], cen[1], 0.0, 0.0, Tk, 1.0]
+        kwt = ngmix.GMixModel(pars, 'gauss')
+
+        return kwt, cen, dims
 
 def _calcmom_ksigma_obs(obs, sigma_weight, **kw):
     """
