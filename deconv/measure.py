@@ -12,6 +12,7 @@ from .util import DeconvMaxiter
 
 MAX_ALLOWED_E=0.9999999
 DEFVAL=-9999.0
+PDEFVAL=9999.0
 
 LOW_T=2**0
 HIGH_E=2**1
@@ -346,14 +347,13 @@ class ObsKSigmaMoments(Moments):
         other keywords for calcmom_ksigma
     """
 
-    def __init__(self, obs, sigma_weight, skip_flagged=True, weight_type='ksigma', **kw):
+    def __init__(self, obs, sigma_weight, skip_flagged=True, **kw):
         import ngmix
         self.mb_obs = ngmix.observation.get_mb_obs(obs)
 
         self.nband=len(self.mb_obs)
 
         self.sigma_weight=sigma_weight
-        self.weight_type=weight_type
 
         self.skip_flagged=skip_flagged
         self.kw=kw
@@ -408,17 +408,13 @@ class ObsKSigmaMoments(Moments):
 
         for obslist in self.mb_obs:
             reslist=[]
-            measlist=[]
             for obs in obslist:
 
                 gs_kimage,gs_ikimage = obs.deconvolver.get_kimage(
                     shear=shear,
                 )
-                #print("dk:",gs_kimage.scale)
 
-                #print("before:",gs_kimage(10,10))
                 if fix_noise:
-                    #print("fixing noise")
                     ny,nx=gs_kimage.array.shape
                     nshear=shear
                     if nshear is not None:
@@ -432,11 +428,8 @@ class ObsKSigmaMoments(Moments):
                     )
                     gs_kimage += rim
 
-                    #print("after:",gs_kimage(10,10))
-
                 res=self._measure_moments(gs_kimage, obs.weight)
 
-                measlist.append(meas)
                 reslist.append(res)
 
             mb_reslist.append( reslist )
@@ -636,6 +629,22 @@ class ObsKSigmaMoments(Moments):
 
 
 class ObsGaussMoments(ObsKSigmaMoments):
+    def __init__(self, *args, **kw):
+        super(ObsGaussMoments,self).__init__(*args, **kw)
+
+        self.noise_dims=array([32.0, 36.0, 48.0])
+        self.noise_factors=array([18.34, 20.69, 27.75])
+
+        #self.noise_factors={
+        #    32:18.34,
+        #    36:20.69,
+        #    48:27.75,
+        #}
+
+
+    def _get_noise_factor(self, dim):
+        return numpy.interp(dim, self.noise_dims, self.noise_factors)
+
     def _measure_moments(self, gs_kimage, weight):
         import ngmix
 
@@ -643,9 +652,10 @@ class ObsGaussMoments(ObsKSigmaMoments):
             raise NotImplementedError("no dweight yet for gauss moms")
 
         dk = gs_kimage.scale
-        dksq = dk**2
+        dk2 = dk**2
+        dk4 = dk**4
 
-        kwt, cen, dims = self._get_gauss_weight(gs_kimage)
+        kwt, cen, dims = self._get_gaussian_weight(gs_kimage)
 
         if self._trim:
             mindist=min(cen[0], (dims[0]-1)-cen[0],
@@ -659,12 +669,43 @@ class ObsGaussMoments(ObsKSigmaMoments):
             row=cen[0],
             col=cen[1],
         )
+
+        # if dk was 1, sigma^2 would equal that in real space.
+        # 
+
+        #print("    Faking k space weight from median")
+        medwt = numpy.median(weight)
+        dim=weight.shape[0]
+        #noise_factor=self._get_noise_factor(dim)
+        noise_factor = weight.shape[0]
+        weight_factor = 1.0/noise_factor**2
+
+        kivar = zeros( gs_kimage.array.shape ) + medwt*weight_factor
+
+
         kobs = ngmix.Observation(
             gs_kimage.array,
-            weight=weight,
+            weight=kivar,
             jacobian=jacob,
         )
         res = kwt.get_weighted_moments(kobs, rmax=rmax)
+
+        """
+        if res['pars'][5] < 0.0:
+            import images
+            kwt_im=kwt.make_image(gs_kimage.array.shape, jacobian=jacob)
+            images.multiview(gs_kimage.array*kwt_im)
+            if raw_input('hit a key: ')=='q':
+                stop
+        """
+
+        # put onto a common scale
+        if res['flags']==0:
+            res['pars'][0:0+2] *= dk
+            res['pars'][2:2+2] *= dk2
+
+            res['pars_cov'][0:0+2, 0:0+2] *= dk2
+            res['pars_cov'][2:2+2, 2:2+2] *= dk4
 
         return res
 
@@ -677,14 +718,13 @@ class ObsGaussMoments(ObsKSigmaMoments):
         nimage_band     = zeros(nband,dtype='i2')
         nimage_use_band = zeros(nband,dtype='i2')
 
-        parsum = zeros(6)
-        pvarsum = zeros( (6,6) )
-
-        wsum_band = zeros(nband)
-        wsum      = 0.0
-
-        wfluxsum_band   = zeros(nband)
-        wfluxsum        = 0.0
+        parsum        = zeros(6)
+        pvarsum       = zeros( (6,6) )
+        wsum_band     = zeros(nband)
+        wsum          = 0.0
+        wfluxsum_band = zeros(nband)
+        wfluxsum      = 0.0
+        wflux_band    = zeros(nband) + DEFVAL
 
         for band,reslist in enumerate(self._mb_reslist):
 
@@ -710,6 +750,10 @@ class ObsGaussMoments(ObsKSigmaMoments):
                     wfluxsum_band[band] += tres['pars'][5]
                     wfluxsum += tres['pars'][5]
 
+        w,=numpy.where(wsum_band > 0.0)
+        if w.size > 0:
+            wflux_band[w] = wfluxsum_band[w]/wsum_band[w]
+
         # the wflux set here will be over-written
         res=self._get_result(parsum, pvarsum, wsum)
 
@@ -724,58 +768,126 @@ class ObsGaussMoments(ObsKSigmaMoments):
         res['orflags']         = orflags
         res['flags_band']      = orflags_band.copy()
 
-        res['wflux_band']      = numpy.zeros(nband) + DEFVAL
-        res['wflux']           = DEFVAL
+        res['wflux_band']      = wflux_band
 
-        if nimage_use > 0:
+        self._result=res
 
-            # for now straight average of fluxes
-            w,=numpy.where(nimage_use_band > 0)
-            if w.size > 0:
-                res['wflux_band'][w] = wfluxsum_band[w]/wsum_band[band]
-                res['flags_band'][w] = 0
+    def _get_result(self, parsum, pvarsum, wsum):
+        """
+        averages:
+            flux = sum(w*F)/sum(w)
+            T = sum(w*T)/sum(w)
+            M1 = sum(w*(x^2-y^2))/sum(w)
+            M2 = sum(w*(2*x*y))/sum(w)
+            e1 = -M1/T # minus due to k space
+            e2 = -M2/T
+        """
+        from math import sqrt
 
-            res['wflux'] = wfluxsum/wsum
-
+        flags=0
 
         wflux=DEFVAL
-        irr_k=DEFVAL
-        irc_k=DEFVAL
-        icc_k=DEFVAL
+        M1_k=DEFVAL
+        M2_k=DEFVAL
+        T_k=DEFVAL
 
         e1=DEFVAL
         e2=DEFVAL
         T=DEFVAL
-        T_k=DEFVAL
 
-        flags=res['flags']
-        if flags==0:
-            pars=res['pars']
-            wfluxsum = pars[5]
+        T_err  = PDEFVAL
+        e1_err = PDEFVAL
+        e2_err = PDEFVAL
+        e_cov = zeros( (2,2) )+PDEFVAL
 
-            if wfluxsum <= 0.0:
+        flux_s2n=DEFVAL
+
+        if wsum <= 0.0:
+            print("    LOW_WSUM")
+            flags |= LOW_WSUM
+        else:
+
+            wflux    = parsum[5]/wsum
+
+            if parsum[5] <= 0.0:
+                print("    LOW_FLUX",wflux)
+                flags |= LOW_FLUX
+            elif pvarsum[5,5] <= 0.0:
+                print("    LOW FLUX VARSUM")
                 flags |= LOW_FLUX
             else:
-                T_k = pars[4]/wfluxsum
-                if T_k <= 0:
-                    flags |= LOW_T
-                else:
 
-                    T_k *= dk**2
-                    M1_k = pars[2]/wfluxsum*dk**2
-                    M2_k = pars[3]/wfluxsum*dk**2
+                flux_s2n = parsum[5]/sqrt(pvarsum[5,5])
 
-                    T=1.0/T_k
-                    e1 = -M1_k/T
-                    e2 = -M2_k/T
+                if self._deweight:
+                    #irr_k,irc_k,icc_k,flags = self._deweight_moments(irr_k, irc_k, icc_k)
+                    raise NotImplementedError("fix deweight")
 
-                    wfluxsum_err = sqrt(res['pars_cov'][5,5])
-                    s2n_w = wfluxsum/wfluxsum_err
+                if flags==0:
 
-                    res['T_k'] = T_k
-                    res['M1_k'] = M1_k
-                    res['M2_k'] = M2_k
-                    res['s2n_w'] = wflux/res['wsum']
+                    if parsum[4] <= 0.0:
+                        print("    LOW_T")
+                        flags |= LOW_T
+                    else:
+
+                        # T is 1/T_k so parsum[5]/parsum[4]
+
+                        T, T_err = util.get_ratio_and_error(
+                            parsum[5],
+                            parsum[4],
+                            pvarsum[5,5],
+                            pvarsum[4,4],
+                            pvarsum[5,4],
+                        )
+                        e1m, e1_err = util.get_ratio_and_error(
+                            parsum[2],
+                            parsum[4],
+                            pvarsum[2,2],
+                            pvarsum[4,4],
+                            pvarsum[2,4],
+                        )
+                        e2m, e2_err = util.get_ratio_and_error(
+                            parsum[3],
+                            parsum[4],
+                            pvarsum[3,3],
+                            pvarsum[4,4],
+                            pvarsum[3,4],
+                        )
+
+                        # e real space is - e k space
+                        e1 = -e1m
+                        e2 = -e2m
+
+                        e_cov[0,0] = e1_err**2
+                        e_cov[1,1] = e2_err**2
+
+                        etot = sqrt(e1**2 + e2**2)
+                        if etot >= MAX_ALLOWED_E:
+                            flags |= HIGH_E
+
+        res={
+            'flags':flags,
+
+            'parsum':parsum,
+            'pvarsum':pvarsum,
+
+            'T':T, # real space T
+            'T_err': T_err,
+
+            'e1':e1,
+            'e2':e2,
+            'e':array([e1,e2]),
+
+            'e1_err':e1_err,
+            'e2_err':e2_err,
+            'e_cov':e_cov,
+
+            'wflux': wflux,
+            'flux_s2n':flux_s2n,
+
+            'wsum':wsum,
+
+        }
 
         return res
 
@@ -794,7 +906,7 @@ class ObsGaussMoments(ObsKSigmaMoments):
         sigmak *= (1.0/dk)
 
         Tk = 2.0*sigmak**2
-        pars = [cen[0], cen[1], 0.0, 0.0, Tk, 1.0]
+        pars = [0.0, 0.0, 0.0, 0.0, Tk, 1.0]
         kwt = ngmix.GMixModel(pars, 'gauss')
 
         return kwt, cen, dims
