@@ -99,20 +99,18 @@ def symmetrize_image(im, cen=None, doplot=False, file=None, **kw):
             **kw)
 
 
-def get_ratio_and_error(a, b, var_a, var_b, cov_ab):
+def get_ratio_error(a, b, var_a, var_b, cov_ab):
     """
     get a/b and error on a/b
     """
     from math import sqrt
 
-    rsquared, var = get_ratio_and_var(a, b, var_a, var_b, cov_ab)
+    var = get_ratio_var(a, b, var_a, var_b, cov_ab)
 
-    #print(rsquared, var)
-    ratio = sqrt(rsquared)
     error = sqrt(var)
-    return ratio, error
+    return error
 
-def get_ratio_and_var(a, b, var_a, var_b, cov_ab):
+def get_ratio_var(a, b, var_a, var_b, cov_ab):
     """
     get (a/b)**2 and variance in mean of (a/b)
     """
@@ -124,4 +122,4 @@ def get_ratio_and_var(a, b, var_a, var_b, cov_ab):
     #var = rsq * (  var_a/a**2 + var_b/b**2 - 2*cov_ab/(a*b) )
     var = rsq * (  var_a/a**2 + var_b/b**2 )
 
-    return rsq, var
+    return var

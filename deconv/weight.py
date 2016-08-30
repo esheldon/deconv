@@ -1,6 +1,6 @@
 from __future__ import print_function
 import numpy
-from numpy import array
+from numpy import array, zeros, sqrt
 
 from . import util
 
@@ -132,5 +132,66 @@ class KSigmaWeight(object):
             wt[w] = (1.0 - k2[w]*self.sigma2/2/self.N)**self.N
 
         return wt, rows, cols
+
+
+class KSigmaWeightC(object):
+    """
+    A simple weight as  used in Bernstein et al. 2015
+
+        (1 - k^2 sigma^2/2 N)^N  k < sqrt(2N)/sigma
+                  0              k > sqrt(2N)/sigma
+    with N=4
+    """
+    def __init__(self, sigma, **kw):
+        self.sigma=sigma
+
+    def get_weighted_moments(self, obs, **kw):
+        """
+        get the weight function and the rows,cols for the grid
+        """
+        import ngmix
+
+        jacob=obs.jacobian
+        assert isinstance(jacob,ngmix.Jacobian)
+
+        jrow,jcol=jacob.get_cen()
+
+        N=4.0
+        kmax = sqrt(2.0*N)/self.sigma
+        #print("half dim:",0.5*obs.image.shape[0],"kmax:",kmax)
+        if kmax > 0.5*jrow or kmax > 0.5*jcol:
+            raise ValueError("weight goes outside of image bounds")
+
+        pars=zeros(6)
+        pcov=zeros( (6,6) )
+        tres=ngmix.gmix._gmix.get_ksigma_weighted_moments(
+            obs.image,
+            obs.weight,
+            obs.jacobian._data,
+
+            pars, # these get modified internally
+            pcov,
+            self.sigma,
+        )
+        flags,wsum,s2n_numer,s2n_denom = tres
+
+        flagstr=_moms_flagmap[flags]
+        return {
+            'flags':flags,
+            'flagstr':flagstr,
+
+            'pars':pars,
+            'pars_cov':pcov,
+
+            'wsum':wsum,
+
+            's2n_numer_sum':s2n_numer,
+            's2n_denom_sum':s2n_denom,
+        }
+
+_moms_flagmap={
+    0:'ok',
+    1:'zero weight encountered',
+}
 
 
