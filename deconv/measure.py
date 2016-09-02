@@ -834,7 +834,11 @@ class ObsGaussMoments(ObsKSigmaMoments):
                         # T is 1/T_k so parsum[5]/parsum[4]
 
                         # e real space is - e k space
-                        T  =  parsum[5]/parsum[4]
+                        Tk =  parsum[4]/parsum[5]
+                        sigmaksq = Tk/2.0
+                        sigmasq = 1.0/sigmaksq
+                        T = 2.0*sigmasq
+
                         e1 = -parsum[2]/parsum[4]
                         e2 = -parsum[3]/parsum[4]
 
