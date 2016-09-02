@@ -112,8 +112,8 @@ class DeConvolver(object):
 
         psf_image /= imsum
 
-        self.igal = galsim.InterpolatedImage(gal_image)
-        self.ipsf = galsim.InterpolatedImage(psf_image)
+        self.igal = galsim.InterpolatedImage(gal_image, x_interpolant='lanczos15')
+        self.ipsf = galsim.InterpolatedImage(psf_image, x_interpolant='lanczos15')
 
         self.ipsf_inv = galsim.Deconvolve(self.ipsf)
 

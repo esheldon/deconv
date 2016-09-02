@@ -3,6 +3,7 @@ import numpy
 from numpy import array, zeros, sqrt
 
 from . import util
+from .util import DeconvRangeError
 
 class KSigmaWeight(object):
     """
@@ -160,7 +161,9 @@ class KSigmaWeightC(object):
         kmax = sqrt(2.0*N)/self.sigma
         #print("half dim:",0.5*obs.image.shape[0],"kmax:",kmax)
         if kmax > 0.5*jrow or kmax > 0.5*jcol:
-            raise ValueError("weight goes outside of image bounds")
+            mess=("weight goes outside of image "
+                  "bounds: %g > %g,%g" % (kmax,0.5*jrow,0.5*jcol))
+            raise DeconvRangeError(mess)
 
         pars=zeros(6)
         pcov=zeros( (6,6) )

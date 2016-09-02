@@ -341,6 +341,8 @@ class ObsKSigmaMoments(Moments):
         self.skip_flagged=skip_flagged
         self.kw=kw
         self._deweight = kw.get('deweight',False)
+        self._force_same = kw.get('force_same',False)
+
         self._dk = kw.get('dk',None)
 
         #self._set_deconvolvers()
@@ -409,23 +411,30 @@ class ObsKSigmaMoments(Moments):
                     ny=ny,
                 )
 
-                if il == 0:
+                if self._force_same and il == 0:
                     # this will force them all to be the same from here on
                     dk = gs_kimage.scale
                     ny,nx=gs_kimage.array.shape
-                
+
+                #print("dk:",dk,"nx,ny:",nx,ny)
 
                 if fix_noise:
-                    #ny,nx=gs_kimage.array.shape
+                    #if self._force_same:
+                    #    ndk = gs_kimage.scale
+                    #else:
+                    #    ndk = None
+
+                    ndk = gs_kimage.scale
+                    nny,nnx=gs_kimage.array.shape
                     nshear=shear
                     if nshear is not None:
                         nshear = -nshear
 
                     rim,iim = obs.noise_deconvolver.get_kimage(
                         shear=nshear,
-                        nx=nx,
-                        ny=ny,
-                        dk=dk,
+                        nx=nnx,
+                        ny=nny,
+                        dk=ndk,
                     )
                     gs_kimage += rim
 
@@ -438,10 +447,12 @@ class ObsKSigmaMoments(Moments):
 
             mb_reslist.append( reslist )
 
-        self._kdims=ny,nx
+        if self._force_same:
+            self._kdims=ny,nx
+            self._dk = dk
+
         self._mb_reslist=mb_reslist
         self._combine_results()
-        self._dk = dk
 
     def _combine_results(self):
         nband=self.nband
