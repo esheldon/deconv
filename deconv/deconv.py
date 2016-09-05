@@ -33,12 +33,14 @@ class DeConvolver(object):
         kreal: Galsim Image
         """
 
-        if dk is None:
-            dk=self.dk
-
         if shear is not None:
             return self.get_sheared_kimage(shear, dk=dk, nx=nx, ny=ny)
 
+        #print("sent dk:",dk)
+        if dk is None:
+            dk=self.dk
+
+        #print("drawing unsheared k image with scale:",dk)
         kreal,kimag = self.igal_nopsf.drawKImage(
             dtype=numpy.float64,
             nx=nx,
@@ -61,11 +63,13 @@ class DeConvolver(object):
         kreal: Galsim Image
         """
 
+        #print("sent dk:",dk)
         if dk is None:
             dk=self.dk
 
         obj = self.get_sheared_gsobj(shear)
 
+        #print("drawing sheared k image with scale:",dk)
         kreal,kimag = obj.drawKImage(
             dtype=numpy.float64,
             nx=nx,
@@ -119,4 +123,6 @@ class DeConvolver(object):
 
         self.igal_nopsf = galsim.Convolve(self.igal, self.ipsf_inv)
 
-
+        # should we take this from igal or igal_nopsf?
+        if self.dk is None:
+            self.dk = self.igal.stepK()
