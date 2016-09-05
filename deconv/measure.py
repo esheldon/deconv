@@ -389,6 +389,83 @@ class ObsKSigmaMoments(Moments):
 
         mb_reslist=[]
 
+        dk = self._dk
+
+        if not hasattr(self,'nx'):
+            self.nx,self.ny=None,None
+
+        for il,obslist in enumerate(self.mb_obs):
+            reslist=[]
+            for obs in obslist:
+
+                ivar=obs.weight
+
+                gs_kimage,gs_ikimage = obs.deconvolver.get_kimage(
+                    shear=shear,
+                    dk=dk,
+                    nx=self.nx,
+                    ny=self.ny,
+                )
+
+                self.ny,self.nx=gs_kimage.array.shape
+
+                if fix_noise:
+
+                    nshear=shear
+                    if nshear is not None:
+                        nshear = -nshear
+
+                    ndk = gs_kimage.scale
+                    rim,iim = obs.noise_deconvolver.get_kimage(
+                        shear=nshear,
+                        dk=ndk,
+                        nx=self.nx,
+                        ny=self.ny,
+                    )
+                    gs_kimage += rim
+
+                    # adding equal noise doubles the variance
+                    ivar = ivar * (1.0/2.0)
+
+                print("shape:",gs_kimage.array.shape,"dk:",gs_kimage.scale,"shear:",shear)
+                if False:
+                    import images
+                    dims=gs_kimage.array.shape
+                    kwt = KSigmaWeight(self.sigma_weight*gs_kimage.scale)
+                    cen=util.get_canonical_kcenter(dims)
+                    kweight, rows, cols = kwt.get_weight(dims, cen)
+
+                    pim=gs_kimage.array*kweight
+
+                    pim = pim[cen[0]-12:cen[0]+12+1,
+                              cen[1]-12:cen[1]+12+1]
+                    images.multiview(pim,
+                                     file='/astro/u/esheldon/www/tmp/plots/tmp.png')
+                    if 'q'==raw_input('hit a key: '):
+                        stop
+
+                res=self._measure_moments(gs_kimage, ivar)
+
+                reslist.append(res)
+
+            mb_reslist.append( reslist )
+
+        if self._force_same:
+            self._kdims=ny,nx
+            self._dk = dk
+
+        self._mb_reslist=mb_reslist
+        self._combine_results()
+
+    def go_old(self, shear=None):
+        """
+        measure moments on all images and perform the sum and mean
+        """
+
+        fix_noise=self.kw.get('fix_noise',False)
+
+        mb_reslist=[]
+
         # always force the same dk as first image
         dk = self._dk # could be None the first time through
 
