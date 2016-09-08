@@ -123,3 +123,58 @@ def get_ratio_var(a, b, var_a, var_b, cov_ab):
     var = rsq * (  var_a/a**2 + var_b/b**2 )
 
     return var
+
+DEF_MIN_REL_VAL=0.01
+
+def find_min_kmax(mb_obs, **kw):
+    """
+    the observations must have deconvolvers set
+    """
+
+    kmax = 1.e9
+    for obslist in mb_obs:
+        for obs in obslist:
+            kreal = obs.deconvolver.psf_kreal
+            tkmax = util.find_kmax(kreal)
+
+            if tkmax < kmax:
+                kmax = tkmax
+
+    return kmax
+
+def find_kmax(gsim, **kw):
+    """
+    get the maximum radius in k space for which the value is larger
+    than the indicated value relative to the maximum
+
+    parameters
+    ----------
+    gsim: galsim image
+        A Galsim image instance
+
+    min_rel_val: float, optional
+        The minimum value relative to the max to consider
+    """
+
+    min_rel_val = kw.get('min_rel_val',DEF_MIN_REL_VAL)
+
+    dk=gsim.scale
+
+    dims=gsim.array.shape
+    cen = util.get_canonical_kcenter(dims)
+    rows,cols=util.make_rows_cols(
+        dims,
+        cen=cen,
+    )
+
+    r2 = rows**2 + cols**2
+
+    maxval = gsim.array.max()
+    minval = maxval*min_rel_val
+
+    w=numpy.where(gsim.array > minval)
+    if w[0].size == 0:
+        raise DeconvRangeError("no good psf values in k space")
+
+    return math.sqrt(r2[w].max())
+

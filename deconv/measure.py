@@ -1,14 +1,15 @@
 from __future__ import print_function
+import math
 import numpy
 from numpy import array, zeros
 import galsim
 
 from .weight import KSigmaWeight, KSigmaWeightC
-from .deconv import DeConvolver
-
+from . import deconv
 
 from . import util
 from .util import DeconvMaxiter
+from .util import DeconvRangeError
 
 MAX_ALLOWED_E=0.9999999
 DEFVAL=-9999.0
@@ -46,7 +47,7 @@ def calcmom_ksigma(gal_image, psf_image, sigma_weight, **kw):
 
     # deconvolve the psf
     # note dk can be set in kw
-    deconv=DeConvolver(gal_image, psf_image, **kw)
+    deconv=deconv.DeConvolver(gal_image, psf_image, **kw)
     gs_kimage,gs_ikimage = deconv.get_kimage()
 
     # get the weight function
@@ -292,18 +293,6 @@ class Moments(object):
     def _set_weight(self, kweight, **kw):
         self.kweight = kweight
 
-    '''
-    def _set_weight(self, **kw):
-        """
-        the weight in k space
-        """
-        kwt = KSigmaWeight(self.sigma_weight*self.dk, **kw)
-
-        weight,rows,cols = kwt.get_weight(self.dims, self.cen)
-        self.kweight=weight
-        self.rows=rows
-        self.cols=cols
-    '''
 
     def _check_image(self, im):
         """
@@ -343,6 +332,8 @@ class ObsKSigmaMoments(Moments):
         self._deweight = kw.get('deweight',False)
         self._force_same = kw.get('force_same',False)
 
+        self._type=kw.get('type','ksigma')
+
         self._dk = kw.get('dk',None)
 
         #self._set_deconvolvers()
@@ -380,7 +371,7 @@ class ObsKSigmaMoments(Moments):
         return kwt
 
 
-    def go(self, shear=None):
+    def go(self, shear=None, doplots=False):
         """
         measure moments on all images and perform the sum and mean
         """
@@ -393,6 +384,7 @@ class ObsKSigmaMoments(Moments):
 
         if not hasattr(self,'nx'):
             self.nx,self.ny=None,None
+            #self.nx,self.ny=66,66
 
         for il,obslist in enumerate(self.mb_obs):
             reslist=[]
@@ -422,13 +414,15 @@ class ObsKSigmaMoments(Moments):
                         nx=self.nx,
                         ny=self.ny,
                     )
+                    print(obs.deconvolver.dk,obs.noise_deconvolver.dk)
+                    print(gs_kimage.array.shape, rim.array.shape)
                     gs_kimage += rim
 
                     # adding equal noise doubles the variance
                     ivar = ivar * (1.0/2.0)
 
                 print("shape:",gs_kimage.array.shape,"dk:",gs_kimage.scale,"shear:",shear)
-                if False:
+                if doplots:
                     import images
                     dims=gs_kimage.array.shape
                     kwt = KSigmaWeight(self.sigma_weight*gs_kimage.scale)
@@ -436,13 +430,16 @@ class ObsKSigmaMoments(Moments):
                     kweight, rows, cols = kwt.get_weight(dims, cen)
 
                     pim=gs_kimage.array*kweight
+                    #pim=gs_kimage.array
 
-                    pim = pim[cen[0]-12:cen[0]+12+1,
-                              cen[1]-12:cen[1]+12+1]
-                    images.multiview(pim,
-                                     file='/astro/u/esheldon/www/tmp/plots/tmp.png')
-                    if 'q'==raw_input('hit a key: '):
-                        stop
+                    #off=int(12*(0.1/obs.deconvolver.dk))
+                    off=int(18*(0.1/obs.deconvolver.dk))
+                    pim = pim[cen[0]-off:cen[0]+off+1,
+                              cen[1]-off:cen[1]+off+1]
+                    #images.multiview(obs.image,title='image')
+                    #images.multiview(pim,title=str(shear))#,
+                    images.multiview(obs.deconvolver.kreal,title=str(shear))#,
+                                     #file='/astro/u/esheldon/www/tmp/plots/tmp.png')
 
                 res=self._measure_moments(gs_kimage, ivar)
 
@@ -651,7 +648,7 @@ class ObsKSigmaMoments(Moments):
                 psf_gsim = galsim.Image(pobs.image.copy(), scale=1.0)
 
 
-                obs.deconvolver = DeConvolver(
+                obs.deconvolver = deconv.DeConvolver(
                     gsim,
                     psf_gsim,
                     dk=self._dk, # can be None
@@ -671,7 +668,7 @@ class ObsKSigmaMoments(Moments):
                     # new copy of the psf image
                     psf_gsim = galsim.Image(pobs.image.copy(), scale=1.0)
 
-                    obs.noise_deconvolver = DeConvolver(
+                    obs.noise_deconvolver = deconv.DeConvolver(
                         gs_nim,
                         psf_gsim,
                         dk=self._dk, # can be None
@@ -679,6 +676,7 @@ class ObsKSigmaMoments(Moments):
 
     def _set_deconvolvers_fullwcs(self):
 
+        deconv_class = self._get_deconvolver_class()
         fix_noise=self.kw.get('fix_noise',False)
 
         for obslist in self.mb_obs:
@@ -695,7 +693,7 @@ class ObsKSigmaMoments(Moments):
                 psf_gsim = galsim.Image(pobs.image.copy(), wcs=psf_wcs)
 
 
-                obs.deconvolver = DeConvolver(
+                obs.deconvolver = deconv_class(
                     gsim,
                     psf_gsim,
                     dk=self._dk, # can be None
@@ -715,12 +713,22 @@ class ObsKSigmaMoments(Moments):
                     # new copy of the psf image
                     psf_gsim = galsim.Image(pobs.image.copy(), wcs=psf_wcs)
 
-                    obs.noise_deconvolver = DeConvolver(
+                    obs.noise_deconvolver = deconv_class(
                         gs_nim,
                         psf_gsim,
-                        dk=self._dk, # can be None
+                        dk=obs.deconvolver.get_dk(),
                     )
 
+    def _get_deconvolver_class(self):
+        import deconv
+        if self._type=='prerender':
+            return deconv.DeConvolverPrerender
+        elif self._type=='psfbase':
+            return deconv.DeConvolverPSFBase
+        elif self._type=='ksigma':
+            return deconv.DeConvolver
+        else:
+            raise NotImplementedError("bad type: '%s'" % self._type)
 
 class ObsGaussMoments(ObsKSigmaMoments):
     def __init__(self, *args, **kw):
@@ -927,8 +935,10 @@ class ObsGaussMoments(ObsKSigmaMoments):
                         sigmasq = 1.0/sigmaksq
                         T = 2.0*sigmasq
 
-                        e1 = -parsum[2]/parsum[4]
-                        e2 = -parsum[3]/parsum[4]
+                        denom_index=4
+
+                        e1 = -parsum[2]/parsum[denom_index]
+                        e2 = -parsum[3]/parsum[denom_index]
 
                         T_err = util.get_ratio_error(
                             parsum[5],
@@ -939,17 +949,17 @@ class ObsGaussMoments(ObsKSigmaMoments):
                         )
                         e1_err = util.get_ratio_error(
                             parsum[2],
-                            parsum[4],
+                            parsum[denom_index],
                             pvarsum[2,2],
-                            pvarsum[4,4],
-                            pvarsum[2,4],
+                            pvarsum[denom_index,denom_index],
+                            pvarsum[2,denom_index],
                         )
                         e2_err = util.get_ratio_error(
                             parsum[3],
-                            parsum[4],
+                            parsum[denom_index],
                             pvarsum[3,3],
-                            pvarsum[4,4],
-                            pvarsum[3,4],
+                            pvarsum[denom_index,denom_index],
+                            pvarsum[3,denom_index],
                         )
 
                         e_cov[0,1] = 0.0
@@ -1021,6 +1031,160 @@ class ObsKSigmaMomentsC(ObsGaussMoments):
         kwt = KSigmaWeightC(self.sigma_weight*dk)
 
         return kwt, cen, dims
+
+class KSigmaMomentsPSFBase(ObsKSigmaMomentsC):
+
+    def __init__(self, obs, **kw):
+        import ngmix
+
+        self.mb_obs = ngmix.observation.get_mb_obs(obs)
+
+        self.nband=len(self.mb_obs)
+
+        self.kw=kw
+        self._deweight = kw.get('deweight',False)
+        self._type=kw.get('type',False)
+        self._set_deconvolvers()
+        self._set_sigma_weight()
+
+    def go(self, shear=None, doplots=False):
+        """
+        measure moments on all images and perform the sum and mean
+        """
+
+        fix_noise=self.kw.get('fix_noise',False)
+
+        mb_reslist=[]
+
+
+        for il,obslist in enumerate(self.mb_obs):
+            reslist=[]
+            for obs in obslist:
+
+                ivar=obs.weight
+
+                gs_kimage,gs_ikimage = obs.deconvolver.get_kimage(
+                    shear=shear,
+                )
+
+                if fix_noise:
+
+                    nshear=shear
+                    if nshear is not None:
+                        nshear = -nshear
+
+                    rim,iim = obs.noise_deconvolver.get_kimage(
+                        shear=nshear,
+                    )
+                    #print(obs.deconvolver.get_dk(),
+                    #      obs.noise_deconvolver.get_dk())
+                    #print(gs_kimage.array.shape, rim.array.shape)
+                    gs_kimage += rim
+
+                    # adding equal noise doubles the variance
+                    ivar = ivar * (1.0/2.0)
+
+                #print("shape:",gs_kimage.array.shape,"dk:",gs_kimage.scale,"shear:",shear)
+                if doplots:
+                    import images
+                    dims=gs_kimage.array.shape
+                    kwt = KSigmaWeight(self.sigma_weight*gs_kimage.scale)
+                    cen=util.get_canonical_kcenter(dims)
+                    kweight, rows, cols = kwt.get_weight(dims, cen)
+
+                    pim=gs_kimage.array*kweight
+
+                    images.multiview(pim,title=str(shear))
+
+                res=self._measure_moments(gs_kimage, ivar)
+
+                reslist.append(res)
+
+            mb_reslist.append( reslist )
+
+        self._mb_reslist=mb_reslist
+        self._combine_results()
+
+
+    def _set_sigma_weight(self):
+        """
+        find the largest
+        """
+
+        N=4.0
+        
+        sigma_weight=0.0
+        dk = 0.0
+        for obslist in self.mb_obs:
+            for obs in obslist:
+
+                kreal = obs.deconvolver.psf_kreal
+                kmax = util.find_kmax(kreal)
+
+                if False:
+                    import images
+                    images.multiview(
+                        kreal.array,
+                        title='psf k real',
+                    )
+
+                print("    kmax:",kmax)
+
+                tsigma = math.sqrt(2*N)/kmax
+                if tsigma > sigma_weight:
+                    sigma_weight = tsigma
+                    dk = kreal.scale
+
+        self.sigma_weight = sigma_weight/dk
+        print("    sigma weight:",self.sigma_weight)
+
+    def _set_deconvolvers(self):
+
+        deconv_class = self._get_deconvolver_class()
+        fix_noise=self.kw.get('fix_noise',False)
+
+        interp=self.kw.get('interp',None)
+
+        for obslist in self.mb_obs:
+            for obs in obslist:
+                pobs=obs.psf
+
+                jac=obs.jacobian
+                psf_jac=pobs.jacobian
+
+                wcs = jac.get_galsim_wcs()
+                psf_wcs = psf_jac.get_galsim_wcs()
+
+                gsim = galsim.Image(obs.image.copy(), wcs=wcs)
+                psf_gsim = galsim.Image(pobs.image.copy(), wcs=psf_wcs)
+
+                obs.deconvolver = deconv_class(
+                    gsim,
+                    psf_gsim,
+                    **self.kw
+                )
+
+                if fix_noise:
+                    rnoise = numpy.random.normal(
+                        loc=0.0,
+                        scale=1.0,
+                        size=obs.image.shape,
+                    )
+                    nim = numpy.sqrt( 1.0/obs.weight )
+                    rnoise *= nim
+
+                    gs_nim = galsim.Image(nim, wcs=wcs)
+
+                    # new copy of the psf image
+                    psf_gsim = galsim.Image(pobs.image.copy(), wcs=psf_wcs)
+
+                    obs.noise_deconvolver = deconv_class(
+                        gs_nim,
+                        psf_gsim,
+                        **self.kw
+                    )
+
+
 
 
 def _calcmom_ksigma_obs(obs, sigma_weight, **kw):

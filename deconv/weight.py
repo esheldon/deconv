@@ -160,9 +160,9 @@ class KSigmaWeightC(object):
         N=4.0
         kmax = sqrt(2.0*N)/self.sigma
         #print("half dim:",0.5*obs.image.shape[0],"kmax:",kmax)
-        if kmax > 0.5*jrow or kmax > 0.5*jcol:
+        if kmax > jrow or kmax > jcol:
             mess=("weight goes outside of image "
-                  "bounds: %g > %g,%g" % (kmax,0.5*jrow,0.5*jcol))
+                  "bounds: %g > %g,%g" % (kmax,jrow,jcol))
             raise DeconvRangeError(mess)
 
         pars=zeros(6)
