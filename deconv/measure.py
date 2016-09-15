@@ -1052,6 +1052,8 @@ class KSigmaMomentsPSFBase(ObsKSigmaMomentsC):
         measure moments on all images and perform the sum and mean
         """
 
+        raise RuntimeError("doesn't account for mis-centering")
+
         fix_noise=self.kw.get('fix_noise',False)
 
         mb_reslist=[]
@@ -1061,9 +1063,10 @@ class KSigmaMomentsPSFBase(ObsKSigmaMomentsC):
             reslist=[]
             for obs in obslist:
 
-                ivar=obs.weight
+                # half for real and half for imag
+                ivar = 0.5*obs.weight
 
-                gs_kimage,gs_ikimage = obs.deconvolver.get_kimage(
+                kr,ki = obs.deconvolver.get_kimage(
                     shear=shear,
                 )
 
@@ -1076,27 +1079,12 @@ class KSigmaMomentsPSFBase(ObsKSigmaMomentsC):
                     rim,iim = obs.noise_deconvolver.get_kimage(
                         shear=nshear,
                     )
-                    #print(obs.deconvolver.get_dk(),
-                    #      obs.noise_deconvolver.get_dk())
-                    #print(gs_kimage.array.shape, rim.array.shape)
-                    gs_kimage += rim
+                    kr += rim
 
                     # adding equal noise doubles the variance
                     ivar = ivar * (1.0/2.0)
 
-                #print("shape:",gs_kimage.array.shape,"dk:",gs_kimage.scale,"shear:",shear)
-                if doplots:
-                    import images
-                    dims=gs_kimage.array.shape
-                    kwt = KSigmaWeight(self.sigma_weight*gs_kimage.scale)
-                    cen=util.get_canonical_kcenter(dims)
-                    kweight, rows, cols = kwt.get_weight(dims, cen)
-
-                    pim=gs_kimage.array*kweight
-
-                    images.multiview(pim,title=str(shear))
-
-                res=self._measure_moments(gs_kimage, ivar)
+                res=self._measure_moments(kr, ivar)
 
                 reslist.append(res)
 
@@ -1184,7 +1172,83 @@ class KSigmaMomentsPSFBase(ObsKSigmaMomentsC):
                         **self.kw
                     )
 
+class KSigmaMomentsPSFBasePS(KSigmaMomentsPSFBasePS):
+    def __init__(self, *args, **kw):
+        raise RuntimeError("not finished")
 
+        super(KSigmaMomentsPSFBasePS,self).__init__(*args, **kw)
+        self.ps=None
+        self.scratch=None
+
+    def _get_ps_scratch(self, kr, ki):
+        if self.scratch is None:
+            self.ps = kr.copy()
+            self.scratch = ki.copy()
+        else:
+            self.ps.array[:,:] = kr.array[:,:]
+            self.scratch.array[:,:] = ki.array[:,:]
+
+        return self.ps, self.scratch
+
+    def _make_ps(self, kr, ki):
+
+        # ps and scratch will be copies of kr,ki
+        ps, scratch = self._get_ps_scratch(kr, ki)
+
+        ps *= kr
+        scratch *= ki
+
+        ps += scratch
+
+        return ps
+   
+    def go(self, shear=None, doplots=False):
+        """
+        measure moments on all images and perform the sum and mean
+        """
+
+        fix_noise=self.kw.get('fix_noise',False)
+
+        mb_reslist=[]
+
+        first=True
+        for il,obslist in enumerate(self.mb_obs):
+            reslist=[]
+            for obs in obslist:
+
+                ivar=obs.weight
+
+                kr,ki = obs.deconvolver.get_kimage(
+                    shear=shear,
+                )
+
+                ps = self._make_ps(kr, ki)
+
+                if fix_noise:
+
+                    nshear=shear
+                    if nshear is not None:
+                        nshear = -nshear
+
+                    noise_kr,noise_ki= obs.noise_deconvolver.get_kimage(
+                        shear=nshear,
+                    )
+
+                    noise_ps = self._make_ps(noise_kr, noise_ki)
+
+                    ps -= noise_ps
+
+                    # adding equal noise doubles the variance
+                    ivar = ivar * (1.0/2.0)
+
+                res=self._measure_moments(kr, ivar)
+
+                reslist.append(res)
+
+            mb_reslist.append( reslist )
+
+        self._mb_reslist=mb_reslist
+        self._combine_results()
 
 
 def _calcmom_ksigma_obs(obs, sigma_weight, **kw):
