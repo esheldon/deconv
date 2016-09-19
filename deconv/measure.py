@@ -1172,7 +1172,7 @@ class KSigmaMomentsPSFBase(ObsKSigmaMomentsC):
                         **self.kw
                     )
 
-class KSigmaMomentsPSFBasePS(KSigmaMomentsPSFBasePS):
+class KSigmaMomentsPSFBasePS(KSigmaMomentsPSFBase):
     def __init__(self, *args, **kw):
         raise RuntimeError("not finished")
 

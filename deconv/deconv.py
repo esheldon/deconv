@@ -208,7 +208,8 @@ class DeConvolverPrerender(DeConvolver):
         )
 
 
-DEFAULT_INTERP='quintic'
+DEFAULT_X_INTERP='lanczos15'
+DEFAULT_K_INTERP='quintic'
 
 class DeConvolverPSFBase(DeConvolver):
     """
@@ -225,8 +226,8 @@ class DeConvolverPSFBase(DeConvolver):
             Galsim Image object
         """
 
-        self.x_interpolant = kw.get('x_interpolant',DEFAULT_INTERP)
-        self.k_interpolant = kw.get('k_interpolant',DEFAULT_INTERP)
+        self.x_interpolant = kw.get('x_interpolant',DEFAULT_X_INTERP)
+        self.k_interpolant = kw.get('k_interpolant',DEFAULT_K_INTERP)
 
         self._set_data(gal_image, psf_image)
 
