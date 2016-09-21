@@ -7,6 +7,145 @@ try:
 except:
     pass
 
+XINTERP='lanczos15'
+class DeConvolver(object):
+    """
+    deconvolve the input PSF from the input image
+    """
+    def __init__(self, gal_image, psf_image):
+        """
+        parameters
+        ----------
+        gal_image: galsim Image
+            Galsim Image object
+        psf_image: galsim Image
+            Galsim Image object
+        """
+
+        self._set_data(gal_image, psf_image)
+
+
+    def get_dk(self):
+        """
+        we use the scale from the psf
+        """
+        return self.psf_kreal.scale
+
+    def get_psf_kimage(self):
+        """
+        get k space images for the psf
+        """
+        return self.psf_kreal,self.psf_kimag
+
+    def get_kimage(self, shear=None):
+        """
+        get the real part of the k-space image of the deconvolved galaxy
+
+        returns
+        -------
+        kreal: Galsim Image
+        """
+
+        if shear is not None:
+            return self.get_sheared_kimage(shear)
+        else:
+            return self.get_unsheared_kimage()
+
+
+    def get_sheared_kimage(self, shear):
+        """
+        get the sheared k image
+
+        don't shear the imaginary part
+        """
+
+        obj = self.get_sheared_gsobj(shear)
+
+        kreal,kimag = obj.drawKImage(
+            re=self.psf_kreal.copy(),
+            im=self.psf_kimag.copy(),
+        )
+        return kreal, kimag
+
+    def get_unsheared_kimage(self):
+        """
+        get the unsheared k image
+        """
+
+        kreal,kimag = self.igal_nopsf.drawKImage(
+            re=self.psf_kreal.copy(),
+            im=self.psf_kimag.copy(),
+        )
+        return kreal, kimag
+
+    def get_sheared_gsobj(self, shear):
+        """
+        get sheared version of the interpolated, deconvolved object
+
+        parameters
+        ----------
+        shear: shear object
+            must have .g1 and .g2 attributes
+
+        returns
+        --------
+        galsim InterpolatedImage
+        """
+
+        obj=self.get_gsobj()
+
+        return obj.shear(
+            g1=shear.g1,
+            g2=shear.g2,
+        )
+
+    def get_gsobj(self):
+        """
+        get the galsim interpolated image for the deconvolved object
+        """
+        return self.igal_nopsf
+
+    def _set_data(self, gal_image, psf_image_orig):
+
+        psf_image = psf_image_orig.copy()
+
+        imsum=psf_image.array.sum()
+        if imsum == 0.0:
+            raise DeconvRangeError("PSF image has zero flux")
+
+        psf_image *= (1.0/imsum)
+
+        self.igal = galsim.InterpolatedImage(
+            gal_image,
+            x_interpolant=XINTERP,
+        )
+        self.ipsf = galsim.InterpolatedImage(
+            psf_image,
+            x_interpolant=XINTERP,
+        )
+
+        # make dimensions odd
+        wmult=1.0
+        self.dim = 1 + self.ipsf.SBProfile.getGoodImageSize(
+            self.ipsf.nyquistScale(),
+            wmult,
+        )
+        self.dk=self.ipsf.stepK()
+
+        self.ipsf_inv = galsim.Deconvolve(self.ipsf)
+
+        self.igal_nopsf = galsim.Convolve(self.igal, self.ipsf_inv)
+
+        self.psf_kreal,self.psf_kimag=self.ipsf.drawKImage(
+            dtype=numpy.float64,
+            nx=self.dim,
+            ny=self.dim,
+            scale=self.dk,
+        )
+
+
+
+'''
 class DeConvolver(object):
     """
     deconvolve the input PSF from the input image
@@ -307,4 +446,4 @@ class DeConvolverPSFBase(DeConvolver):
 
         self.psf_kreal,self.psf_kimag=self.ipsf.drawKImage()
 
-
+'''
